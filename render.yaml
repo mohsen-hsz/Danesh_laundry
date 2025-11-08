@@ -1,0 +1,9 @@
+services:
+  - type: web
+    name: lebas-shoii-bot
+    env: python
+    region: frankfurt  # می‌تونی مثلا oregon یا singapore هم بذاری
+    plan: free
+    buildCommand: "pip install -r requirements.txt"
+    startCommand: "python main.py"
+    autoDeploy: true
