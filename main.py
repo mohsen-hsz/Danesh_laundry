@@ -3,8 +3,7 @@ import os
 import json
 import requests
 from telegram import Update, ReplyKeyboardMarkup
-from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, MessageHandler, filters
-
+from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
 
 # -----------------------
 # محیط (از Render یا GitHub Secrets خوانده می‌شوند)
@@ -139,7 +138,7 @@ async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("دستور نامعتبر.")
 
 def main():
-    app = ApplicationBuilder().token(TOKEN).build()
+    app = Application.builder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("days", show_days))
     app.add_handler(CommandHandler("reserve", reserve_slot))
