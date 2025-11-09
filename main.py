@@ -156,29 +156,15 @@ async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # main
 # -----------------------
 def main():
-    import asyncio
+    app = Application.builder().token(TOKEN).build()
 
-    async def init_and_run():
-        app = Application.builder().token(TOKEN).build()
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("days", show_days))
+    app.add_handler(CommandHandler("reserve", reserve_slot))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_buttons))
 
-        app.add_handler(CommandHandler("start", start))
-        app.add_handler(CommandHandler("days", show_days))
-        app.add_handler(CommandHandler("reserve", reserve_slot))
-        app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_buttons))
-
-        print("🤖 Bot is running with PTB 21.5 + Python 3.13 ...")
-
-        # ✅ این نسخه جدید با event loop سازگار است
-        await app.initialize()
-        await app.start()
-        try:
-            await app.run_polling()
-        finally:
-            await app.stop()
-            await app.shutdown()
-
-    # اجرای ایمن در پایتون 3.13
-    asyncio.run(init_and_run())
+    print("🤖 Bot is running with PTB 21.5 + Python 3.13 ...")
+    app.run_polling()  # ✅ خودش event loop را مدیریت می‌کند
 
 
 if __name__ == "__main__":
