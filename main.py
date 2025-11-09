@@ -2,51 +2,47 @@ import os
 import logging
 from flask import Flask, request
 from telegram import Update
-from telegram.ext import Application, CommandHandler, MessageHandler, filters
+from telegram.ext import Application
 
-# handlers
-from handlers.start import start
-from handlers.show_days import show_days
+from handlers.commands import register_commands
+from webhook_setup import setup_webhook
 
+
+logging.basicConfig(
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    level=logging.INFO,
+)
 
 TOKEN = os.getenv("TOKEN")
 RENDER_EXTERNAL_URL = os.getenv("RENDER_EXTERNAL_URL")
 
-
-logging.basicConfig(level=logging.INFO)
+if not TOKEN:
+    raise ValueError("TOKEN not set!")
 
 app = Flask(__name__)
+
 application = Application.builder().token(TOKEN).build()
 
-
-application.add_handler(CommandHandler("start", start))
-application.add_handler(MessageHandler(filters.Regex("نمایش روزها"), show_days))
-
-
-WEBHOOK_PATH = f"/{TOKEN}"
-WEBHOOK_URL = f"{RENDER_EXTERNAL_URL}{WEBHOOK_PATH}"
+# ثبت هندلرها
+register_commands(application)
 
 
-@app.route(WEBHOOK_PATH, methods=["POST"])
-def webhook():
+# ---------------- Webhook route ----------------
+@app.route(f"/{TOKEN}", methods=["POST"])
+async def webhook():
     update = Update.de_json(request.get_json(force=True), application.bot)
-    application.update_queue.put_nowait(update)
+    await application.process_update(update)
     return "ok", 200
 
 
 @app.route("/")
 def index():
-    return "✅ Bot Running"
-
-
-async def set_webhook():
-    await application.bot.set_webhook(WEBHOOK_URL)
+    return "Bot active ✅"
 
 
 if __name__ == "__main__":
     import asyncio
-
-    asyncio.run(set_webhook())
+    asyncio.run(setup_webhook(application, TOKEN, RENDER_EXTERNAL_URL))
 
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
