@@ -82,11 +82,15 @@ async def set_webhook():
         logging.info("Webhook already set correctly.")
 
 # --- اجرای برنامه ---
+async def main():
+    await set_webhook()
+    # استارت پردازش صف آپدیت‌ها (خیلی مهم)
+    await application.start()
+    logging.info("Bot is running and waiting for updates...")
+
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
-
-    # تنظیم webhook قبل از شروع Flask
-    asyncio.get_event_loop().run_until_complete(set_webhook())
-
+    loop = asyncio.get_event_loop()
+    loop.create_task(main())
     logging.info(f"Starting Flask app on port {port} ...")
     app.run(host="0.0.0.0", port=port)
