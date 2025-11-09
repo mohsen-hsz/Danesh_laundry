@@ -6,11 +6,14 @@ from telegram import Update, ReplyKeyboardMarkup
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
 
 # -----------------------
-# محیط (از Render یا GitHub Secrets خوانده می‌شوند)
+# خواندن متغیرهای محیطی
 # -----------------------
-TOKEN = os.getenv('8439374401:AAFN1JdCkTHK3uee5wquHyCTZHYByUk4ljU')              # توکن تلگرام (BotFather)
-JSONBIN_ID = os.getenv('691062a5ae596e708f4dfd76')    # bin id از JSONBin
-JSONBIN_KEY = os.getenv('$$2a$10$AQl3rws35jnF0RJXuK0lq.c/NbCcDFJOBA3FqhNi2.vEG9cfQE2tS')  # API Key از JSONBin
+TOKEN = os.getenv("TOKEN")  # از Environment در Render خوانده می‌شود
+JSONBIN_ID = os.getenv("JSONBIN_ID")
+JSONBIN_KEY = os.getenv("JSONBIN_KEY")
+
+if not TOKEN or not JSONBIN_ID or not JSONBIN_KEY:
+    raise SystemExit("ERROR: TOKEN, JSONBIN_ID or JSONBIN_KEY not set in environment variables.")
 
 if not TOKEN or not JSONBIN_ID or not JSONBIN_KEY:
     raise SystemExit("ERROR: TOKEN, JSONBIN_ID or JSONBIN_KEY not set in environment variables.")
