@@ -54,8 +54,11 @@ WEBHOOK_URL = f"{RENDER_EXTERNAL_URL}{WEBHOOK_PATH}"
 
 @app.route(WEBHOOK_PATH, methods=["POST"])
 def webhook():
-    update = Update.de_json(request.get_json(force=True), application.bot)
-    application.update_queue.put_nowait(update)
+    try:
+        update = Update.de_json(request.get_json(force=True), application.bot)
+        asyncio.get_event_loop().create_task(application.process_update(update))
+    except Exception as e:
+        logging.error(f"Webhook error: {e}")
     return "ok", 200
 
 @app.route("/")
