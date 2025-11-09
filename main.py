@@ -155,21 +155,30 @@ async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # -----------------------
 # main
 # -----------------------
-async def main():
-    app = Application.builder().token(TOKEN).build()
+def main():
+    import asyncio
 
-    # داده‌ها رو یک بار از JSONBin می‌خونیم
-    reservations = await init_data()
-    app.bot_data["reservations"] = reservations
+    async def init_and_run():
+        app = Application.builder().token(TOKEN).build()
 
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("days", show_days))
-    app.add_handler(CommandHandler("reserve", reserve_slot))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_buttons))
+        # داده‌ها رو یک بار از JSONBin می‌خونیم
+        reservations = await init_data()
+        app.bot_data["reservations"] = reservations
 
-    print("🤖 Bot is running with async PTB 21.5 ...")
-    await app.run_polling()
+        app.add_handler(CommandHandler("start", start))
+        app.add_handler(CommandHandler("days", show_days))
+        app.add_handler(CommandHandler("reserve", reserve_slot))
+        app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_buttons))
+
+        print("🤖 Bot is running with PTB 21.5 + Python 3.13 ...")
+        await app.initialize()
+        await app.start()
+        await app.updater.start_polling()
+        await app.updater.idle()
+
+    # اجرای مستقیم بدون asyncio.run()
+    asyncio.get_event_loop().run_until_complete(init_and_run())
 
 if __name__ == "__main__":
-    import asyncio
-    asyncio.run(main())
+    main()
+
