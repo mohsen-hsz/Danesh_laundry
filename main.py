@@ -13,31 +13,44 @@ from telegram.ext import (
     filters,
 )
 
-# توابع ذخیره‌سازی
-from jsonbin import reserve  # فایل jsonbin.py که قبلاً ساختیم
+from jsonbin import reserve   # فایل jsonbin.py
 
-# --- لاگ ---
+# ------------------------
+# logging
+# ------------------------
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# --- ENV ---
+# ------------------------
+# ENV
+# ------------------------
 TOKEN = os.getenv("TOKEN")
 RENDER_EXTERNAL_URL = os.getenv("RENDER_EXTERNAL_URL")
+
 if not TOKEN or not RENDER_EXTERNAL_URL:
     raise RuntimeError("TOKEN یا RENDER_EXTERNAL_URL تعریف نشده")
 
-# --- Flask ---
+WEBHOOK_PATH = f"/{TOKEN}"
+WEBHOOK_URL  = f"{RENDER_EXTERNAL_URL}{WEBHOOK_PATH}"
+
+# ------------------------
+# Flask
+# ------------------------
 app = Flask(__name__)
 
-# --- Telegram Application (بدون اجرا) ---
+# ------------------------
+# Telegram app
+# ------------------------
 application = Application.builder().token(TOKEN).build()
 
-# === حالت‌های مکالمه
+# Conversation states
 FULLNAME, DAY, SLOT = range(3)
 
-# === دستورات ===
+# ------------------------
+# Bot Handlers
+# ------------------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("سلام! برای رزرو /reserve را بزنید.")
+    await update.message.reply_text("سلام! با /reserve می‌تونی رزرو کنی.")
 
 async def reserve_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("نام و نام‌خانوادگی را وارد کنید:")
@@ -67,25 +80,25 @@ async def ask_slot(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def reserve_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
     slot_map = {"18-19": 1, "19-20": 2, "20-21": 3}
-    slot_choice = update.message.text.strip()
-    if slot_choice not in slot_map:
-        await update.message.reply_text("❌ بازه نامعتبر است. دوباره انتخاب کنید.")
+    msg = update.message.text.strip()
+    if msg not in slot_map:
+        await update.message.reply_text("❌ بازه نامعتبر است.")
         return SLOT
 
-    slot = slot_map[slot_choice]
+    slot = slot_map[msg]
     day = context.user_data["day"]
     full_name = context.user_data["full_name"]
     telegram_id = update.effective_user.id
 
-    ok, msg = reserve(day, slot, full_name, telegram_id)
-    await update.message.reply_text(msg, reply_markup=ReplyKeyboardRemove())
+    ok, res = reserve(day, slot, full_name, telegram_id)
+    await update.message.reply_text(res, reply_markup=ReplyKeyboardRemove())
     return ConversationHandler.END
 
-async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def cancel(update, context):
     await update.message.reply_text("لغو شد ✅", reply_markup=ReplyKeyboardRemove())
     return ConversationHandler.END
 
-# === ثبت هندلرها
+# register handlers
 conv = ConversationHandler(
     entry_points=[CommandHandler("reserve", reserve_start)],
     states={
@@ -98,70 +111,80 @@ conv = ConversationHandler(
 application.add_handler(conv)
 application.add_handler(CommandHandler("start", start))
 
-# --- Webhook ---
-WEBHOOK_PATH = f"/{TOKEN}"
-WEBHOOK_URL = f"{RENDER_EXTERNAL_URL}{WEBHOOK_PATH}"
+# ------------------------
+# Async Loop Thread
+# ------------------------
+tg_loop: asyncio.AbstractEventLoop | None = None
 
-# ---------------------------
-#   لوپ سراسری در ترد جدا
-# ---------------------------
-_app_loop: asyncio.AbstractEventLoop | None = None
+def run_loop():
+    global tg_loop
+    tg_loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(tg_loop)
+    tg_loop.run_forever()
 
-def _start_event_loop():
-    """Run a dedicated asyncio loop forever in a background thread."""
-    global _app_loop
-    _app_loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(_app_loop)
-    _app_loop.run_forever()
+loop_thread = threading.Thread(target=run_loop, name="tg-loop", daemon=True)
+loop_thread.start()
 
-# ترد لوپ را بالا می‌آورد
-_loop_thread = threading.Thread(target=_start_event_loop, name="tg-app-loop", daemon=True)
-_loop_thread.start()
 
-def submit(coro: asyncio.coroutines):
-    """اجرای ایمن کوروتین‌ها روی لوپ بک‌گراند"""
-    if _app_loop is None:
-        raise RuntimeError("Event loop not ready")
-    return asyncio.run_coroutine_threadsafe(coro, _app_loop)
+def submit(coro):
+    if tg_loop is None:
+        raise RuntimeError("Event loop not ready!")
+    return asyncio.run_coroutine_threadsafe(coro, tg_loop)
 
-# راه‌اندازی اپ و وبهوک داخل همان لوپ
+# delay bootstrap until loop is ready
 def bootstrap_application():
-    # initialize / start / set_webhook داخل همان لوپ
     submit(application.initialize()).result()
-    # set webhook
-    async def _setup():
+
+    async def setup_webhook():
         info = await application.bot.get_webhook_info()
         if info.url != WEBHOOK_URL:
             await application.bot.delete_webhook()
-            await application.bot.set_webhook(url=WEBHOOK_URL)
-    submit(_setup()).result()
-    # (اختیاری) start internal components
+            await application.bot.set_webhook(WEBHOOK_URL)
+
+    submit(setup_webhook()).result()
     submit(application.start()).result()
-    logger.info("✅ Telegram application ready with webhook: %s", WEBHOOK_URL)
+    logger.info("✅ BOT READY | Webhook → %s", WEBHOOK_URL)
 
-bootstrap_application()
 
-# ---------------------------
-#   Flask routes (sync)
-# ---------------------------
+# =========================
+# Wait loop becomes ready
+# =========================
+def wait_for_loop():
+    import time
+    for _ in range(50):
+        if tg_loop is not None:
+            return True
+        time.sleep(0.1)
+    return False
+
+if wait_for_loop():
+    bootstrap_application()
+else:
+    raise RuntimeError("Event loop failed to start")
+
+# ------------------------
+# WEBHOOK ROUTE
+# ------------------------
 @app.route(WEBHOOK_PATH, methods=["POST"])
 def webhook():
     try:
         data = request.get_json(force=True)
         update = Update.de_json(data, application.bot)
-        submit(application.process_update(update))  # به لوپ بک‌گراند می‌فرستیم
+        submit(application.process_update(update))
     except Exception as e:
         logger.exception("WEBHOOK ERROR: %s", e)
     return "ok", 200
+
 
 @app.route("/")
 def index():
     return "✅ Bot Running"
 
-# ---------------------------
-#   Run Flask
-# ---------------------------
+
+# ------------------------
+# FLASK MAIN
+# ------------------------
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
-    logger.info("🚀 Flask running on port %s", port)
+    port = int(os.getenv("PORT", 5000))
+    logger.info("Flask running on port %s", port)
     app.run(host="0.0.0.0", port=port)
