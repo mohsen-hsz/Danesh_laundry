@@ -1,6 +1,5 @@
 import os
 import logging
-import asyncio
 from flask import Flask, request
 from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove
 from telegram.ext import (
@@ -11,8 +10,9 @@ from telegram.ext import (
     ConversationHandler,
     filters
 )
+import asyncio
 
-# ✅ JSONBin functions
+# === JSONBin funcs ===
 from jsonbin import reserve, get_day_slots
 
 logging.basicConfig(
@@ -25,33 +25,42 @@ RENDER_EXTERNAL_URL = os.getenv("RENDER_EXTERNAL_URL")
 
 app = Flask(__name__)
 
+# ✅ Create Application (GLOBAL, single event loop)
 application = Application.builder().token(TOKEN).build()
-asyncio.get_event_loop().run_until_complete(application.initialize())
 
+
+# === Conversation states ===
 FULLNAME, DAY, SLOT = range(3)
 
 
+# === Commands ===
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("سلام 👋\nبرای رزرو از /reserve استفاده کنید.")
+    await update.message.reply_text(
+        "سلام 👋\nبرای رزرو شستشو، دستور /reserve را بزنید."
+    )
 
 
 async def reserve_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("نام و نام خانوادگی خود را وارد کنید:")
+    await update.message.reply_text(
+        "لطفاً نام و نام‌خانوادگی خود را وارد کنید:"
+    )
     return FULLNAME
 
 
 async def ask_day(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["full_name"] = update.message.text.strip()
 
-    keyboard = [["شنبه", "یکشنبه", "دوشنبه"],
-                ["سه‌شنبه", "چهارشنبه", "پنجشنبه"],
-                ["جمعه"]]
+    keyboard = [
+        ["شنبه", "یکشنبه", "دوشنبه"],
+        ["سه‌شنبه", "چهارشنبه", "پنجشنبه"],
+        ["جمعه"],
+    ]
 
-    reply_markup = ReplyKeyboardMarkup(keyboard, one_time_keyboard=True)
+    markup = ReplyKeyboardMarkup(keyboard, one_time_keyboard=True)
 
     await update.message.reply_text(
-        "لطفا روز موردنظر را انتخاب کنید:",
-        reply_markup=reply_markup,
+        "لطفاً روز مورد نظر خود را انتخاب کنید:",
+        reply_markup=markup,
     )
     return DAY
 
@@ -60,44 +69,50 @@ async def ask_slot(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["day"] = update.message.text.strip()
 
     keyboard = [["18-19", "19-20", "20-21"]]
-    reply_markup = ReplyKeyboardMarkup(keyboard, one_time_keyboard=True)
+    markup = ReplyKeyboardMarkup(keyboard, one_time_keyboard=True)
 
     await update.message.reply_text(
-        "بازه زمانی را انتخاب کنید:",
-        reply_markup=reply_markup
+        "لطفاً بازه زمانی مورد نظر را انتخاب کنید:",
+        reply_markup=markup,
     )
     return SLOT
 
 
 async def reserve_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    slot_text = update.message.text.strip()
-
-    mapping = {
+    slot_map = {
         "18-19": 1,
         "19-20": 2,
-        "20-21": 3
+        "20-21": 3,
     }
 
-    if slot_text not in mapping:
-        await update.message.reply_text("❌ انتخاب نامعتبر!", reply_markup=ReplyKeyboardRemove())
+    slot_choice = update.message.text.strip()
+
+    if slot_choice not in slot_map:
+        await update.message.reply_text(
+            "❌ بازه نامعتبر است. دوباره انتخاب کنید."
+        )
         return SLOT
 
-    slot = mapping[slot_text]
-    day_name = context.user_data["day"]
+    slot = slot_map[slot_choice]
+    day = context.user_data["day"]
     full_name = context.user_data["full_name"]
     telegram_id = update.effective_user.id
 
-    ok, msg = reserve(day_name, slot, full_name, telegram_id)
+    ok, msg = reserve(day, slot, full_name, telegram_id)
 
     await update.message.reply_text(msg, reply_markup=ReplyKeyboardRemove())
     return ConversationHandler.END
 
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("✅ عملیات لغو شد", reply_markup=ReplyKeyboardRemove())
+    await update.message.reply_text(
+        "✅ عملیات لغو شد.",
+        reply_markup=ReplyKeyboardRemove()
+    )
     return ConversationHandler.END
 
 
+# === Conversation Handler ===
 conv_handler = ConversationHandler(
     entry_points=[CommandHandler("reserve", reserve_start)],
     states={
@@ -112,29 +127,29 @@ application.add_handler(conv_handler)
 application.add_handler(CommandHandler("start", start))
 
 
-# ✅ Webhook
+# === Webhook ===
 WEBHOOK_PATH = f"/{TOKEN}"
 WEBHOOK_URL = f"{RENDER_EXTERNAL_URL}{WEBHOOK_PATH}"
 
-@app.route(WEBHOOK_PATH, methods=["POST"])
-def webhook():
+
+@app.post(WEBHOOK_PATH)
+async def webhook():
+    """Receive telegram update via webhook"""
     try:
-        update = Update.de_json(request.get_json(force=True), application.bot)
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        loop.run_until_complete(application.process_update(update))
-        loop.close()
-    except:
-        pass
-    return "ok", 200
+        data = request.get_json(force=True)
+        update = Update.de_json(data, application.bot)
+        await application.process_update(update)
+    except Exception as e:
+        print("WEBHOOK ERROR:", e)
+    return "ok"
 
 
-@app.route("/")
+@app.get("/")
 def index():
     return "✅ Bot Running"
 
 
-async def set_webhook():
+async def setup_webhook():
     info = await application.bot.get_webhook_info()
     if info.url != WEBHOOK_URL:
         await application.bot.delete_webhook()
@@ -142,6 +157,9 @@ async def set_webhook():
 
 
 if __name__ == "__main__":
+    loop = asyncio.get_event_loop()
+    loop.run_until_complete(application.initialize())
+    loop.run_until_complete(setup_webhook())
+
     port = int(os.environ.get("PORT", 5000))
-    asyncio.get_event_loop().run_until_complete(set_webhook())
     app.run(host="0.0.0.0", port=port)
