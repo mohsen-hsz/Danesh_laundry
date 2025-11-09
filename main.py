@@ -161,24 +161,25 @@ def main():
     async def init_and_run():
         app = Application.builder().token(TOKEN).build()
 
-        # داده‌ها رو یک بار از JSONBin می‌خونیم
-        reservations = await init_data()
-        app.bot_data["reservations"] = reservations
-
         app.add_handler(CommandHandler("start", start))
         app.add_handler(CommandHandler("days", show_days))
         app.add_handler(CommandHandler("reserve", reserve_slot))
         app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_buttons))
 
         print("🤖 Bot is running with PTB 21.5 + Python 3.13 ...")
+
+        # ✅ این نسخه جدید با event loop سازگار است
         await app.initialize()
         await app.start()
-        await app.updater.start_polling()
-        await app.updater.idle()
+        try:
+            await app.run_polling()
+        finally:
+            await app.stop()
+            await app.shutdown()
 
-    # اجرای مستقیم بدون asyncio.run()
-    asyncio.get_event_loop().run_until_complete(init_and_run())
+    # اجرای ایمن در پایتون 3.13
+    asyncio.run(init_and_run())
+
 
 if __name__ == "__main__":
     main()
-
