@@ -21,13 +21,11 @@ RENDER_EXTERNAL_URL = os.getenv("RENDER_EXTERNAL_URL")
 
 app = Flask(__name__)
 
-# global app
 application = Application.builder().token(TOKEN).build()
 
 FULLNAME, DAY, SLOT = range(3)
 
 
-# === handlers ===
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("سلام! برای رزرو /reserve را بزنید.")
 
@@ -50,7 +48,6 @@ async def ask_day(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "لطفاً روز را انتخاب کنید:",
         reply_markup=ReplyKeyboardMarkup(keyboard, one_time_keyboard=True),
     )
-
     return DAY
 
 
@@ -88,7 +85,6 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 
-# === Conversation handler
 conv = ConversationHandler(
     entry_points=[CommandHandler("reserve", reserve_start)],
     states={
@@ -99,6 +95,7 @@ conv = ConversationHandler(
     fallbacks=[CommandHandler("cancel", cancel)],
 )
 
+
 application.add_handler(conv)
 application.add_handler(CommandHandler("start", start))
 
@@ -107,18 +104,17 @@ WEBHOOK_PATH = f"/{TOKEN}"
 WEBHOOK_URL = f"{RENDER_EXTERNAL_URL}{WEBHOOK_PATH}"
 
 
-# ✅ NON-ASYNC webhook → safe for Flask
+# ✅ webhook بدون async → اجرای درست در Flask
 @app.post(WEBHOOK_PATH)
 def webhook():
     try:
         data = request.get_json(force=True)
         update = Update.de_json(data, application.bot)
 
-        # process async safely WITHOUT async view
         asyncio.get_event_loop().create_task(application.process_update(update))
 
-    except Exception as e:
-        print("WEBHOOK ERROR:", e)
+    except:
+        pass
 
     return "ok"
 
