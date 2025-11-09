@@ -1,9 +1,8 @@
 services:
-  - type: worker   # 👈 اینو از web به worker تغییر بده
+  - type: worker
     name: lebas-shoii-bot
     env: python
     region: frankfurt
     plan: free
     buildCommand: "pip install -r requirements.txt"
     startCommand: "python main.py"
-    autoDeploy: true
