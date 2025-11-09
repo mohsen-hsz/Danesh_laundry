@@ -1,86 +1,60 @@
-import os
 from flask import Flask, request
+import os
 from telegram import Update
-from telegram.ext import (
-    Application,
-    CommandHandler,
-    MessageHandler,
-    ContextTypes,
-    filters,
-)
+from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters
 
-# -------------------------
-# 🔹 Load ENV token
-# -------------------------
+# ENV
 TOKEN = os.environ.get("BOT_TOKEN")
+JSONBIN_KEY = os.environ.get("JSONBIN_KEY")
+WEBHOOK_URL = os.environ.get("RENDER_EXTERNAL_URL")  # → خود render می‌سازه
 
-if not TOKEN:
-    raise ValueError("❌ BOT_TOKEN is not set in environment variables.")
+app = Flask(__name__)
 
-
-# -------------------------
-# 🔹 Create Telegram Application
-# -------------------------
+# Init bot
 application = Application.builder().token(TOKEN).build()
 
 
-# -------------------------
-# ✅ Handlers
-# -------------------------
+# ===== handlers =====
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("سلام 👋 ربات به درستی وصله ✅")
+    await update.message.reply_text("سلام! 👋\nربات رزرو لباس‌شویی آماده‌ست.")
 
 
-async def echo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(update.message.text)
-
-
-# Register handlers
 application.add_handler(CommandHandler("start", start))
-application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, echo))
 
 
-# -------------------------
-# ✅ Flask Web Server
-# -------------------------
-app = Flask(__name__)
-
-
-@app.get("/")
-def index():
-    return "Bot is running ✅"
-
-
-@app.post("/")
+# ===== Webhook endpoint =====
+@app.route("/webhook", methods=["POST"])
 def webhook():
-    """
-    Telegram webhook target
-    """
-    json_data = request.get_json(force=True)
-
-    if not json_data:
-        return "No JSON", 400
-
-    update = Update.de_json(json_data, application.bot)
-
-    # ✅ push update to PTB queue
+    """Handle Telegram webhooks"""
+    data = request.get_json(force=True)
+    update = Update.de_json(data, application.bot)
     application.update_queue.put_nowait(update)
-    return "ok", 200
+    return "ok"
 
 
-# -------------------------
-# ✅ Start both Flask + PTB
-# -------------------------
+@app.route("/")
+def home():
+    return "Bot running ✅"
+
+
+# ===== set webhook =====
+async def set_webhook():
+    await application.bot.set_webhook(f"{WEBHOOK_URL}/webhook")
+
+
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 10000))
-    print(f"✅ Server Running on port {port}")
+    print("✅ Starting Flask")
 
-    # ✅ Start PTB as async background
-    application.run_webhook(
-        listen="0.0.0.0",
-        port=port,
-        url_path="",
+    # Start bot + Flask
+    application.run_polling()  # still needed so handlers work
+
+    # Set webhook
+    import asyncio
+    asyncio.run(set_webhook())
+
+    # Run Flask
+    app.run(
+        host="0.0.0.0",
+        port=int(os.environ.get("PORT", 10000))
     )
-
-    # Optional: Keep Flask active
-    app.run(host="0.0.0.0", port=port)
