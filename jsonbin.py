@@ -1,122 +1,108 @@
-import os
 import requests
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
-JSONBIN_ID = os.getenv("JSONBIN_ID")
-JSONBIN_KEY = os.getenv("JSONBIN_KEY")
+JSONBIN_URL = "https://api.jsonbin.io/v3/b/.../latest"   # ✅ بن‌هات رو بذار
+JSONBIN_WRITE_URL = "https://api.jsonbin.io/v3/b/..."
+JSONBIN_KEY = "xxxx"
 
-BASE_URL = f"https://api.jsonbin.io/v3/b/{JSONBIN_ID}"
+def fetch_db():
+    headers = {"X-Master-Key": JSONBIN_KEY}
+    res = requests.get(JSONBIN_URL, headers=headers)
+    data = res.json()["record"]
 
-HEADERS = {
-    "Content-Type": "application/json",
-    "X-Master-Key": JSONBIN_KEY
-}
-
-
-# ✅ محاسبه شنبه هفته فعلی
-def get_current_week_start():
-    today = datetime.now()
-    weekday = today.weekday()    # دوشنبه=0 ... یکشنبه=6
-
-    # ما شنبه را مبنا می‌گیریم → شماره 5
-    delta = (weekday - 5) % 7
-    saturday = today - timedelta(days=delta)
-
-    return saturday.strftime("%Y-%m-%d")
-
-
-# ✅ دریافت دیتای ذخیره‌شده + ریست هفتگی
-def load_data():
-    r = requests.get(BASE_URL, headers=HEADERS)
-
-    if r.status_code != 200:
-        raise Exception("❌ JSONBin load error")
-
-    data = r.json()["record"]
-
-    current_week_start = get_current_week_start()
-
-    if data.get("week_start") != current_week_start:
-        data = {
-            "week_start": current_week_start,
-            "reservations": []
-        }
-        save_data(data)
+    # ساختار اگر خالی بود
+    if "week_start" not in data or "reservations" not in data:
+        data = {"week_start":"", "reservations":[]}
 
     return data
 
 
-# ✅ ذخیره در JSONBin
-def save_data(data):
-    r = requests.put(BASE_URL, headers=HEADERS, json=data)
-    return r.status_code in (200, 201)
-
-
-# ✅ تبدیل نام روز → تاریخ دقیق
-def weekday_to_date(weekday_name):
-    mapping = {
-        "شنبه": 0,
-        "یکشنبه": 1,
-        "دوشنبه": 2,
-        "سه‌شنبه": 3,
-        "چهارشنبه": 4,
-        "پنجشنبه": 5,
-        "جمعه": 6,
+def save_db(data):
+    headers = {
+        "Content-Type": "application/json",
+        "X-Master-Key": JSONBIN_KEY,
     }
-
-    if weekday_name not in mapping:
-        return None
-
-    data = load_data()
-    week_start = datetime.strptime(data["week_start"], "%Y-%m-%d")
-    return (week_start + timedelta(days=mapping[weekday_name])).strftime("%Y-%m-%d")
+    requests.put(JSONBIN_WRITE_URL, headers=headers, json=data)
 
 
-# ✅ رزرو
-def reserve(day_name, slot, full_name, telegram_id):
-    data = load_data()
+def get_current_week_start():
+    """اولین شنبه همین هفته - بر اساس تهران"""
+    now = datetime.now(ZoneInfo("Asia/Tehran"))
+    weekday = now.weekday()   # شنبه = 5 ولی چون default Monday=0 → تنظیم لازم داریم
+    # برای ایران: شنبه = 6 کاملاً بهتره
+    # برای ساده‌سازی: شنبه → weekday=6
 
-    date = weekday_to_date(day_name)
-    if not date:
-        return False, "❌ روز نامعتبر است."
+    # اگر هفته را از شنبه واقعی بخوایم (Saturday=5)
+    # ولی برای ایران تقویم شنبه=6، بنابراین:
+    shift = (now.weekday() - 5) % 7
+    week_start = (now - timedelta(days=shift)).date()
+    return str(week_start)
 
-    # جلوگیری از رزرو تکراری
-    for r in data["reservations"]:
-        if r["date"] == date and r["slot"] == slot:
-            return False, "❌ این بازه زمانی قبلاً رزرو شده است."
 
-    # ذخیره
-    data["reservations"].append({
-        "date": date,
-        "day": day_name,
+def reset_if_needed(db):
+    """ریست هفتگی وقتی جمعه شب گذشته باشد"""
+    now = datetime.now(ZoneInfo("Asia/Tehran")).date()
+
+    if not db["week_start"]:
+        db["week_start"] = get_current_week_start()
+        db["reservations"] = []
+        save_db(db)
+        return db
+
+    ws = datetime.fromisoformat(db["week_start"]).date()
+
+    # اگر هفته جدید شروع شده
+    if now >= ws + timedelta(days=7):
+        db["week_start"] = get_current_week_start()
+        db["reservations"] = []
+        save_db(db)
+
+    return db
+
+
+def get_available_days(db):
+    """بازگرداندن روزهایی که گذشته نیستند و full نیستند"""
+
+    week_start = datetime.fromisoformat(db["week_start"]).date()
+    now = datetime.now(ZoneInfo("Asia/Tehran")).date()
+
+    valid_days = []
+    for i in range(7):
+        day = week_start + timedelta(days=i)
+        if day < now:
+            continue   # روز گذشته → حذف کنیم
+
+        if not is_day_full(db, i):
+            valid_days.append(i)
+
+    return valid_days
+
+
+def is_day_full(db, day_index):
+    """اگر همه اسلات‌ها پر باشند"""
+    slots = get_free_slots(db, day_index)
+    return len(slots) == 0
+
+
+def get_free_slots(db, day_index):
+    """اسلات‌های آزاد"""
+    all_slots = [
+        "09:00 - 11:00",
+        "11:00 - 13:00",
+        "13:00 - 15:00",
+        "15:00 - 17:00",
+        "17:00 - 19:00",
+        "19:00 - 21:00",
+    ]
+    taken = [r["slot"] for r in db["reservations"] if r["day"] == day_index]
+    return [s for s in all_slots if s not in taken]
+
+
+def reserve_time(db, name, day_index, slot):
+    db["reservations"].append({
+        "name": name,
+        "day": day_index,
         "slot": slot,
-        "full_name": full_name,
-        "telegram_id": telegram_id
     })
-
-    save_data(data)
-    return True, "✅ رزرو با موفقیت ثبت شد."
-
-
-# ✅ بررسی اسلات‌های روز
-def get_day_slots(day_name):
-    data = load_data()
-
-    date = weekday_to_date(day_name)
-    if not date:
-        return None
-
-    taken = {
-        r["slot"]
-        for r in data["reservations"]
-        if r["date"] == date
-    }
-
-    result = []
-    for slot in [1, 2, 3]:
-        result.append({
-            "slot": slot,
-            "status": "taken" if slot in taken else "free"
-        })
-
-    return result
+    save_db(db)
