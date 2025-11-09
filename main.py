@@ -1,9 +1,16 @@
 # main.py
 import os
 import json
-import requests
+import httpx
+from datetime import datetime
 from telegram import Update, ReplyKeyboardMarkup
-from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    ContextTypes,
+    MessageHandler,
+    filters
+)
 
 # -----------------------
 # خواندن متغیرهای محیطی
@@ -15,9 +22,6 @@ JSONBIN_KEY = os.getenv("JSONBIN_KEY")
 if not TOKEN or not JSONBIN_ID or not JSONBIN_KEY:
     raise SystemExit("ERROR: TOKEN, JSONBIN_ID or JSONBIN_KEY not set in environment variables.")
 
-if not TOKEN or not JSONBIN_ID or not JSONBIN_KEY:
-    raise SystemExit("ERROR: TOKEN, JSONBIN_ID or JSONBIN_KEY not set in environment variables.")
-
 BASE_URL = f"https://api.jsonbin.io/v3/b/{JSONBIN_ID}"
 HEADERS = {
     "Content-Type": "application/json",
@@ -25,23 +29,25 @@ HEADERS = {
 }
 
 # -----------------------
-# توابع خواندن/نوشتن امن روی JSONBin
+# توابع خواندن/نوشتن امن روی JSONBin (async)
 # -----------------------
-def load_remote():
+async def load_remote():
     """دریافت JSON از JSONBin"""
-    r = requests.get(BASE_URL, headers=HEADERS, timeout=10)
-    r.raise_for_status()
-    payload = r.json()
-    return payload.get("record", {})
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        r = await client.get(BASE_URL, headers=HEADERS)
+        r.raise_for_status()
+        payload = r.json()
+        return payload.get("record", {})
 
-def save_remote(data):
+async def save_remote(data):
     """ذخیره (PUT) داده در JSONBin"""
-    r = requests.put(BASE_URL, headers=HEADERS, json=data, timeout=10)
-    r.raise_for_status()
-    return r.json()
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        r = await client.put(BASE_URL, headers=HEADERS, json=data)
+        r.raise_for_status()
+        return r.json()
 
 # -----------------------
-# تولید اسلات‌های نیم‌ساعته (قابل تغییر)
+# تولید اسلات‌های نیم‌ساعته
 # -----------------------
 def generate_slots(start_hour=17, start_min=30, end_hour=23, step=30):
     slots = []
@@ -62,17 +68,18 @@ def make_default_data():
     return {"meta": {"version":1}, "slots": slots}
 
 # -----------------------
-# بارگذاری اولیه (اگر خالی یا خراب بود، مقدار پیش‌فرض می‌سازد)
+# بارگذاری اولیه
 # -----------------------
-try:
-    reservations = load_remote()
-    if not reservations:
+async def init_data():
+    try:
+        reservations = await load_remote()
+        if not reservations:
+            reservations = make_default_data()
+            await save_remote(reservations)
+    except Exception as e:
+        print("⚠️ خطا در ارتباط با JSONBin:", e)
         reservations = make_default_data()
-        save_remote(reservations)
-except Exception as e:
-    # خطای ارتباط با JSONBin -> می‌زنیم مقدار محلی اولیه و اجازه میدیم که کار کند
-    print("⚠️ خطا در ارتباط با JSONBin:", e)
-    reservations = make_default_data()
+    return reservations
 
 # -----------------------
 # UI و دستورات
@@ -81,9 +88,13 @@ main_keyboard = [["📅 نمایش روزها", "🧺 رزرو روز"]]
 reply_markup = ReplyKeyboardMarkup(main_keyboard, resize_keyboard=True)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("سلام 👋\nربات رزرو لباس‌شویی فعال است.", reply_markup=reply_markup)
+    await update.message.reply_text(
+        "سلام 👋\nربات رزرو لباس‌شویی فعال است.",
+        reply_markup=reply_markup
+    )
 
 async def show_days(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    reservations = context.bot_data.get("reservations", {})
     text = "🧺 وضعیت اسلات‌ها:\n\n"
     slots = reservations.get("slots", {})
     for day, day_slots in slots.items():
@@ -93,7 +104,8 @@ async def show_days(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(text)
 
 async def reserve_slot(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # فرمت پیشنهادی: /reserve شنبه 18:00
+    reservations = context.bot_data.get("reservations", {})
+
     if len(context.args) < 2:
         await update.message.reply_text("فرمت: /reserve <روز> <ساعت>\nمثال: /reserve سه‌شنبه 18:00")
         return
@@ -117,13 +129,13 @@ async def reserve_slot(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "user_id": user.id,
         "username": user.username,
         "full_name": user.full_name,
-        "reserved_at": __import__("datetime").datetime.utcnow().isoformat()
+        "reserved_at": datetime.utcnow().isoformat()
     }
     slots[day][time] = reserve_info
 
-    # ذخیره به JSONBin
     try:
-        save_remote(reservations)
+        await save_remote(reservations)
+        context.bot_data["reservations"] = reservations
     except Exception as e:
         await update.message.reply_text("❗ خطا در ذخیره‌سازی ابری: رزرو محلی انجام شد اما ممکن است همگام‌سازی نشود.")
         print("Save error:", e)
@@ -140,14 +152,24 @@ async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("دستور نامعتبر.")
 
-def main():
+# -----------------------
+# main
+# -----------------------
+async def main():
     app = Application.builder().token(TOKEN).build()
+
+    # داده‌ها رو یک بار از JSONBin می‌خونیم
+    reservations = await init_data()
+    app.bot_data["reservations"] = reservations
+
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("days", show_days))
     app.add_handler(CommandHandler("reserve", reserve_slot))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_buttons))
-    print("🤖 Bot running (using JSONBin for storage)...")
-    app.run_polling()
+
+    print("🤖 Bot is running with async PTB 21.5 ...")
+    await app.run_polling()
 
 if __name__ == "__main__":
-    main()
+    import asyncio
+    asyncio.run(main())
