@@ -12,6 +12,10 @@ from telegram.ext import (
     filters
 )
 
+#  ✅ اضافه مهم — اتصال jsonbin
+from jsonbin import reserve
+
+
 # --- تنظیمات لاگ ---
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -36,22 +40,55 @@ application = Application.builder().token(TOKEN).build()
 # 🧩 initialize کردن application (خیلی مهم!)
 asyncio.get_event_loop().run_until_complete(application.initialize())
 
-# --- دستورات ---
+
+# ===============================
+# ✅ دستورات ربات
+# ===============================
+
+# ---------- /start ----------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("سلام 👋 من ربات نوبت‌دهی هستم. لطفاً روز و ساعت مورد نظر خودت رو بفرست.")
+    await update.message.reply_text("سلام 👋 من ربات نوبت‌دهی هستم. برای تست ذخیره‌سازی /reserve_test را بزن ✅")
 
+# ---------- /help ----------
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("برای رزرو زمان فقط روز و ساعت رو بفرست 😊")
+    await update.message.reply_text("💡 برای تست سیستم رزرو:\n/reserve_test را ارسال کن")
 
+
+# ---------- ✅ تست رزرو واقعی ----------
+async def reserve_test(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+
+    # تاریخ تست — امروز
+    from datetime import datetime
+    date = datetime.now().strftime("%Y-%m-%d")
+
+    # اسلات تست
+    slot = 1
+
+    # نام تست
+    full_name = user.full_name if user.full_name else "Test User"
+
+    ok, msg = reserve(date, slot, full_name, user.id)
+
+    await update.message.reply_text(msg)
+
+
+# ---------- دریافت متن معمولی ----------
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
     await update.message.reply_text(f"پیامت دریافت شد: {text}")
 
+
+# ✅ ثبت Handler ها
 application.add_handler(CommandHandler("start", start))
 application.add_handler(CommandHandler("help", help_command))
+application.add_handler(CommandHandler("reserve_test", reserve_test))
 application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-# --- Webhook ---
+
+# ===============================
+# ✅ Webhook
+# ===============================
 WEBHOOK_PATH = f"/{TOKEN}"
 WEBHOOK_URL = f"{RENDER_EXTERNAL_URL}{WEBHOOK_PATH}"
 
@@ -67,11 +104,13 @@ def webhook():
         logging.error(f"Webhook error: {e}")
     return "ok", 200
 
+
 @app.route("/")
 def index():
-    return "✅ ربات فعاله و در حال اجراست!"
+    return "✅ ربات فعاله — از /reserve_test برای تست ذخیره‌سازی استفاده کن"
 
-# --- تابع راه‌اندازی Webhook ---
+
+# ---------- تنظیم Webhook ----------
 async def set_webhook():
     webhook_info = await application.bot.get_webhook_info()
     if webhook_info.url != WEBHOOK_URL:
@@ -81,7 +120,8 @@ async def set_webhook():
     else:
         logging.info("✅ Webhook already set correctly.")
 
-# --- اجرای Flask و Webhook ---
+
+# ✅ اجرای Flask
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
 
