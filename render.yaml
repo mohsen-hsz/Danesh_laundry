@@ -1,5 +1,5 @@
 services:
-  - type: web
+  - type: worker   # 👈 اینو از web به worker تغییر بده
     name: lebas-shoii-bot
     env: python
     region: frankfurt
