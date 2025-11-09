@@ -33,6 +33,9 @@ app = Flask(__name__)
 # --- ساخت ربات ---
 application = Application.builder().token(TOKEN).build()
 
+# 🧩 initialize کردن application (خیلی مهم!)
+asyncio.get_event_loop().run_until_complete(application.initialize())
+
 # --- دستورات ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("سلام 👋 من ربات نوبت‌دهی هستم. لطفاً روز و ساعت مورد نظر خودت رو بفرست.")
@@ -78,19 +81,12 @@ async def set_webhook():
     else:
         logging.info("✅ Webhook already set correctly.")
 
-# --- تابع راه‌اندازی ربات در thread جدا ---
-def start_bot():
-    async def run():
-        await set_webhook()
-        await application.start()
-        logging.info("🤖 Bot is up and running!")
-        await application.updater.start_polling()  # نه اجباری ولی کمک می‌کند برای پردازش صف
-        await asyncio.Event().wait()  # نگه داشتن تا بی‌نهایت
-    asyncio.run(run())
-
-# --- اجرای Flask ---
+# --- اجرای Flask و Webhook ---
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
-    threading.Thread(target=start_bot, daemon=True).start()
+
+    # راه‌اندازی webhook قبل از اجرا
+    asyncio.get_event_loop().run_until_complete(set_webhook())
+
     logging.info(f"🚀 Starting Flask on port {port}")
     app.run(host="0.0.0.0", port=port)
