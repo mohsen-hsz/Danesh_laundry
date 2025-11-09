@@ -24,11 +24,10 @@ log = logging.getLogger("main")
 
 app = Flask(__name__)
 
-# ✅ Single global loop
+# ✅ shared loop
 loop = asyncio.new_event_loop()
 asyncio.set_event_loop(loop)
 
-# ✅ telegram application on top of SAME loop
 application: Application = (
     ApplicationBuilder()
     .token(TOKEN)
@@ -36,31 +35,26 @@ application: Application = (
     .build()
 )
 
+# ------------ Handlers -------------
 
-# ─────────── handlers ───────────
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("✅ ربات آماده است")
-
+    await update.message.reply_text("✅ ربات فعال است!\nسلام 👋")
 
 async def echo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(f"پیام دریافت شد:\n{update.message.text}")
-
+    await update.message.reply_text(f"پیام شما:\n{update.message.text}")
 
 application.add_handler(CommandHandler("start", start))
 application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, echo))
 
+# --------- webhook route ------------
 
-# ─────────── webhook endpoint ───────────
 @app.post(f"/{TOKEN}")
 def webhook():
-    data = request.get_json()
-
-    if not data:
-        return "no json", 400
+    data = request.get_json(force=True)
 
     update = Update.de_json(data, application.bot)
 
-    # ✅ Use shared loop
+    # ✅ no asyncio.run → use loop
     loop.create_task(application.process_update(update))
 
     return "ok"
@@ -71,7 +65,8 @@ def home():
     return "Bot Running ✅"
 
 
-# ─────────── init webhook ───────────
+# --------- Webhook setup ------------
+
 async def setup():
     await application.initialize()
     await application.bot.delete_webhook(drop_pending_updates=True)
