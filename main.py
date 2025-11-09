@@ -1,40 +1,46 @@
-import os
 import logging
-from telegram.ext import (
-    ApplicationBuilder,
-    CommandHandler,
-    MessageHandler,
-    ContextTypes,
-    filters,
-)
+import asyncio
+from telegram.ext import Application
+from aiohttp import web
 
-TOKEN = os.getenv("TOKEN")
+from config import TOKEN, RENDER_EXTERNAL_URL, PORT
+from bot.handlers import register_handlers
 
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s"
+    format="%(asctime)s — %(name)s — %(levelname)s — %(message)s"
 )
+log = logging.getLogger("main")
 
-# ✅ Handlers
-async def start(update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("✅ ربات فعاله")
+WEBHOOK_PATH = f"/{TOKEN}"
+WEBHOOK_URL = f"{RENDER_EXTERNAL_URL}{WEBHOOK_PATH}"
 
-async def echo(update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(f"پیام دریافت شد:\n{update.message.text}")
+async def on_startup(app: Application):
+    # مسیر Health برای Render
+    async def health(_):
+        return web.Response(text="OK ✅")
+    app.web_app.router.add_get("/", health)
 
-# ✅ Main
+    # حذف وب‌هوک قبلی و ست کردن جدید
+    info = await app.bot.get_me()
+    log.info("Bot: @%s", info.username)
+    await app.bot.delete_webhook(drop_pending_updates=True)
+    await app.bot.set_webhook(url=WEBHOOK_URL)
+    log.info("✅ Webhook set: %s", WEBHOOK_URL)
+
 def main():
-    app = ApplicationBuilder().token(TOKEN).build()
+    application = Application.builder().token(TOKEN).build()
+    register_handlers(application)
 
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, echo))
-
-    port = int(os.environ.get("PORT", 10000))
-
-    app.run_webhook(
+    # اجرای وب‌هوک داخلی PTB (aiohttp)
+    application.run_webhook(
         listen="0.0.0.0",
-        port=port,
-        webhook_url=f"{os.getenv('RENDER_EXTERNAL_URL')}/{TOKEN}"
+        port=PORT,
+        url_path=TOKEN,            # مسیر لوکال سرور
+        webhook_url=WEBHOOK_URL,   # آدرسی که تلگرام صدا می‌زند
+        post_init=on_startup,      # Health + set webhook
+        drop_pending_updates=True,
+        stop_signals=None          # Render سیگنال خاصی نمی‌فرسته؛ خنثی
     )
 
 if __name__ == "__main__":
