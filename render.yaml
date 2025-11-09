@@ -2,11 +2,9 @@ services:
   - type: web
     name: lebas-shoii-bot
     env: python
-    region: frankfurt  # می‌تونی مثلا oregon یا singapore هم بذاری
+    region: frankfurt
     plan: free
     buildCommand: "pip install -r requirements.txt"
     startCommand: "python main.py"
+    pythonVersion: 3.12.5
     autoDeploy: true
-    envVars:
-      - key: PYTHON_VERSION
-        value: 3.11.9
