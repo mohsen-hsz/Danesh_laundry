@@ -1,81 +1,41 @@
 import os
 import logging
-import asyncio
-from flask import Flask, request
-from telegram import Update
 from telegram.ext import (
     ApplicationBuilder,
-    Application,
     CommandHandler,
     MessageHandler,
     ContextTypes,
     filters,
 )
 
-TOKEN = os.getenv("TOKEN") or "YOUR_TOKEN_HERE"
-RENDER_URL = os.getenv("RENDER_EXTERNAL_URL") or "https://danesh-laundry.onrender.com"
-WEBHOOK_URL = f"{RENDER_URL}/{TOKEN}"
+TOKEN = os.getenv("TOKEN")
 
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s — %(name)s — %(levelname)s — %(message)s",
-)
-log = logging.getLogger("main")
-
-app = Flask(__name__)
-
-# ✅ shared loop
-loop = asyncio.new_event_loop()
-asyncio.set_event_loop(loop)
-
-application: Application = (
-    ApplicationBuilder()
-    .token(TOKEN)
-    .updater(None)
-    .build()
+    format="%(asctime)s - %(levelname)s - %(message)s"
 )
 
-# ------------ Handlers -------------
+# ✅ Handlers
+async def start(update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("✅ ربات فعاله")
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("✅ ربات فعال است!\nسلام 👋")
+async def echo(update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(f"پیام دریافت شد:\n{update.message.text}")
 
-async def echo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(f"پیام شما:\n{update.message.text}")
+# ✅ Main
+def main():
+    app = ApplicationBuilder().token(TOKEN).build()
 
-application.add_handler(CommandHandler("start", start))
-application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, echo))
-
-# --------- webhook route ------------
-
-@app.post(f"/{TOKEN}")
-def webhook():
-    data = request.get_json(force=True)
-
-    update = Update.de_json(data, application.bot)
-
-    # ✅ no asyncio.run → use loop
-    loop.create_task(application.process_update(update))
-
-    return "ok"
-
-
-@app.get("/")
-def home():
-    return "Bot Running ✅"
-
-
-# --------- Webhook setup ------------
-
-async def setup():
-    await application.initialize()
-    await application.bot.delete_webhook(drop_pending_updates=True)
-    await application.bot.set_webhook(WEBHOOK_URL)
-    log.info(f"✅ Webhook set: {WEBHOOK_URL}")
-
-
-if __name__ == "__main__":
-    loop.run_until_complete(setup())
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, echo))
 
     port = int(os.environ.get("PORT", 10000))
-    app.run(host="0.0.0.0", port=port)
+
+    app.run_webhook(
+        listen="0.0.0.0",
+        port=port,
+        webhook_url=f"{os.getenv('RENDER_EXTERNAL_URL')}/{TOKEN}"
+    )
+
+if __name__ == "__main__":
+    main()
