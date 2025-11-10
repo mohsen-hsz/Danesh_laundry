@@ -13,11 +13,8 @@ from telegram.ext import (
     filters,
 )
 
-from jsonbin import reserve   # فایل jsonbin.py
+from jsonbin import reserve, cancel_reservation
 
-# ------------------------
-# logging
-# ------------------------
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -39,38 +36,41 @@ WEBHOOK_URL  = f"{RENDER_EXTERNAL_URL}{WEBHOOK_PATH}"
 app = Flask(__name__)
 
 # ------------------------
-# Telegram app
+# Telegram
 # ------------------------
 application = Application.builder().token(TOKEN).build()
 
-# Conversation states
 FULLNAME, DAY, SLOT = range(3)
 
-# ------------------------
-# Bot Handlers
-# ------------------------
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("سلام! با /reserve می‌تونی رزرو کنی.")
+    await update.message.reply_text(
+        "سلام! برای رزرو /reserve و برای لغو رزرو /cancel_reserve"
+    )
 
 async def reserve_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("نام و نام‌خانوادگی را وارد کنید:")
     return FULLNAME
 
+
 async def ask_day(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["full_name"] = update.message.text.strip()
+
     keyboard = [
         ["شنبه", "یکشنبه", "دوشنبه"],
         ["سه‌شنبه", "چهارشنبه", "پنجشنبه"],
         ["جمعه"],
     ]
     await update.message.reply_text(
-        "روز مورد نظر را انتخاب کنید:",
+        "روز را انتخاب کنید:",
         reply_markup=ReplyKeyboardMarkup(keyboard, one_time_keyboard=True),
     )
     return DAY
 
+
 async def ask_slot(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["day"] = update.message.text.strip()
+
     keyboard = [["18-19", "19-20", "20-21"]]
     await update.message.reply_text(
         "بازه زمانی را انتخاب کنید:",
@@ -78,9 +78,11 @@ async def ask_slot(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     return SLOT
 
+
 async def reserve_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
     slot_map = {"18-19": 1, "19-20": 2, "20-21": 3}
     msg = update.message.text.strip()
+
     if msg not in slot_map:
         await update.message.reply_text("❌ بازه نامعتبر است.")
         return SLOT
@@ -94,11 +96,19 @@ async def reserve_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(res, reply_markup=ReplyKeyboardRemove())
     return ConversationHandler.END
 
+
+async def cancel_reserve_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    telegram_id = update.effective_user.id
+    ok, msg = cancel_reservation(telegram_id)
+    await update.message.reply_text(msg)
+
+
 async def cancel(update, context):
     await update.message.reply_text("لغو شد ✅", reply_markup=ReplyKeyboardRemove())
     return ConversationHandler.END
 
-# register handlers
+
+# ثبت handlers
 conv = ConversationHandler(
     entry_points=[CommandHandler("reserve", reserve_start)],
     states={
@@ -108,13 +118,15 @@ conv = ConversationHandler(
     },
     fallbacks=[CommandHandler("cancel", cancel)],
 )
+
 application.add_handler(conv)
 application.add_handler(CommandHandler("start", start))
+application.add_handler(CommandHandler("cancel_reserve", cancel_reserve_cmd))
 
 # ------------------------
-# Async Loop Thread
+# Async Loop
 # ------------------------
-tg_loop: asyncio.AbstractEventLoop | None = None
+tg_loop = None
 
 def run_loop():
     global tg_loop
@@ -122,57 +134,32 @@ def run_loop():
     asyncio.set_event_loop(tg_loop)
     tg_loop.run_forever()
 
-loop_thread = threading.Thread(target=run_loop, name="tg-loop", daemon=True)
-loop_thread.start()
-
+threading.Thread(target=run_loop, daemon=True).start()
 
 def submit(coro):
-    if tg_loop is None:
-        raise RuntimeError("Event loop not ready!")
     return asyncio.run_coroutine_threadsafe(coro, tg_loop)
 
-# delay bootstrap until loop is ready
-def bootstrap_application():
+
+def bootstrap():
     submit(application.initialize()).result()
 
     async def setup_webhook():
-        info = await application.bot.get_webhook_info()
-        if info.url != WEBHOOK_URL:
-            await application.bot.delete_webhook()
-            await application.bot.set_webhook(WEBHOOK_URL)
+        await application.bot.delete_webhook()
+        await application.bot.set_webhook(WEBHOOK_URL)
 
     submit(setup_webhook()).result()
     submit(application.start()).result()
-    logger.info("✅ BOT READY | Webhook → %s", WEBHOOK_URL)
+    logger.info("✅ BOT READY | %s", WEBHOOK_URL)
 
-
-# =========================
-# Wait loop becomes ready
-# =========================
-def wait_for_loop():
-    import time
-    for _ in range(50):
-        if tg_loop is not None:
-            return True
-        time.sleep(0.1)
-    return False
-
-if wait_for_loop():
-    bootstrap_application()
-else:
-    raise RuntimeError("Event loop failed to start")
 
 # ------------------------
-# WEBHOOK ROUTE
+# Webhook
 # ------------------------
 @app.route(WEBHOOK_PATH, methods=["POST"])
 def webhook():
-    try:
-        data = request.get_json(force=True)
-        update = Update.de_json(data, application.bot)
-        submit(application.process_update(update))
-    except Exception as e:
-        logger.exception("WEBHOOK ERROR: %s", e)
+    data = request.get_json(force=True)
+    update = Update.de_json(data, application.bot)
+    submit(application.process_update(update))
     return "ok", 200
 
 
@@ -182,9 +169,8 @@ def index():
 
 
 # ------------------------
-# FLASK MAIN
+# Run
 # ------------------------
 if __name__ == "__main__":
-    port = int(os.getenv("PORT", 5000))
-    logger.info("Flask running on port %s", port)
-    app.run(host="0.0.0.0", port=port)
+    bootstrap()
+    app.run(host="0.0.0.0", port=int(os.getenv("PORT", 5000)))

@@ -17,23 +17,18 @@ HEADERS = {
 def get_current_week_start():
     today = datetime.now()
     weekday = today.weekday()    # دوشنبه=0 ... یکشنبه=6
-
-    # ما شنبه را مبنا می‌گیریم → شماره 5
-    delta = (weekday - 5) % 7
+    delta = (weekday - 5) % 7    # شنبه = index=5
     saturday = today - timedelta(days=delta)
-
     return saturday.strftime("%Y-%m-%d")
 
 
-# ✅ دریافت دیتای ذخیره‌شده + ریست هفتگی
+# ✅ دریافت دیتا + ریست هفتگی
 def load_data():
     r = requests.get(BASE_URL, headers=HEADERS)
-
     if r.status_code != 200:
         raise Exception("❌ JSONBin load error")
 
     data = r.json()["record"]
-
     current_week_start = get_current_week_start()
 
     if data.get("week_start") != current_week_start:
@@ -46,13 +41,13 @@ def load_data():
     return data
 
 
-# ✅ ذخیره در JSONBin
+# ✅ ذخیره
 def save_data(data):
     r = requests.put(BASE_URL, headers=HEADERS, json=data)
     return r.status_code in (200, 201)
 
 
-# ✅ تبدیل نام روز → تاریخ دقیق
+# ✅ تبدیل نام روز → تاریخ
 def weekday_to_date(weekday_name):
     mapping = {
         "شنبه": 0,
@@ -85,7 +80,6 @@ def reserve(day_name, slot, full_name, telegram_id):
         if r["date"] == date and r["slot"] == slot:
             return False, "❌ این بازه زمانی قبلاً رزرو شده است."
 
-    # ذخیره
     data["reservations"].append({
         "date": date,
         "day": day_name,
@@ -95,28 +89,20 @@ def reserve(day_name, slot, full_name, telegram_id):
     })
 
     save_data(data)
-    return True, "✅ رزرو با موفقیت ثبت شد."
+    return True, "✅ رزرو با موفقیت انجام شد."
 
 
-# ✅ بررسی اسلات‌های روز
-def get_day_slots(day_name):
+# ✅ لغو رزرو کاربر
+def cancel_reservation(telegram_id):
     data = load_data()
+    res = data.get("reservations", [])
 
-    date = weekday_to_date(day_name)
-    if not date:
-        return None
+    new_res = [r for r in res if r["telegram_id"] != telegram_id]
 
-    taken = {
-        r["slot"]
-        for r in data["reservations"]
-        if r["date"] == date
-    }
+    if len(new_res) == len(res):
+        return False, "❌ شما رزروی ندارید."
 
-    result = []
-    for slot in [1, 2, 3]:
-        result.append({
-            "slot": slot,
-            "status": "taken" if slot in taken else "free"
-        })
+    data["reservations"] = new_res
+    save_data(data)
 
-    return result
+    return True, "✅ رزرو شما لغو شد."
