@@ -1,60 +1,62 @@
-from flask import Flask, request
 import os
+from flask import Flask, request
 from telegram import Update
-from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters
+from telegram.ext import (
+    Application, 
+    CommandHandler,
+    ContextTypes,
+    MessageHandler,
+    filters
+)
 
-# ENV
+# ===== ENV =====
 TOKEN = os.environ.get("BOT_TOKEN")
-JSONBIN_KEY = os.environ.get("JSONBIN_KEY")
-WEBHOOK_URL = os.environ.get("RENDER_EXTERNAL_URL")  # → خود render می‌سازه
+WEBHOOK_URL = os.environ.get("RENDER_EXTERNAL_URL")   # e.g. https://danesh-laundry.onrender.com
+
+# ===== Bot =====
+application = Application.builder().token(TOKEN).build()
 
 app = Flask(__name__)
 
-# Init bot
-application = Application.builder().token(TOKEN).build()
 
-
-# ===== handlers =====
+# ----- Telegram handlers -----
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("سلام! 👋\nربات رزرو لباس‌شویی آماده‌ست.")
-
+    await update.message.reply_text(
+        "سلام! 👋\nربات رزرو لباس‌شویی آماده‌ست ✅"
+    )
 
 application.add_handler(CommandHandler("start", start))
 
 
-# ===== Webhook endpoint =====
+# ===== Flask Webhook endpoint =====
 @app.route("/webhook", methods=["POST"])
 def webhook():
-    """Handle Telegram webhooks"""
     data = request.get_json(force=True)
     update = Update.de_json(data, application.bot)
     application.update_queue.put_nowait(update)
-    return "ok"
+    return "OK"
 
 
 @app.route("/")
 def home():
-    return "Bot running ✅"
+    return "Bot is running ✅"
 
 
-# ===== set webhook =====
+# ===== Set webhook =====
 async def set_webhook():
-    await application.bot.set_webhook(f"{WEBHOOK_URL}/webhook")
+    full_url = f"{WEBHOOK_URL}/webhook"
+    print("Setting webhook to:", full_url)
+    await application.bot.set_webhook(full_url)
 
 
 if __name__ == "__main__":
-    print("✅ Starting Flask")
+    port = int(os.environ.get("PORT", 10000))
 
-    # Start bot + Flask
-    application.run_polling()  # still needed so handlers work
-
-    # Set webhook
     import asyncio
     asyncio.run(set_webhook())
 
-    # Run Flask
-    app.run(
-        host="0.0.0.0",
-        port=int(os.environ.get("PORT", 10000))
-    )
+    print("✅ Flask running on port:", port)
+
+    # Start flask ONLY
+    app.run(host="0.0.0.0", port=port)
