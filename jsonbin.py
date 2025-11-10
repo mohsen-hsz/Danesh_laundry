@@ -1,108 +1,108 @@
 import os
 import requests
-from datetime import datetime, timedelta
+from datetime import datetime
+from zoneinfo import ZoneInfo  # ✅ جایگزین pytz
 
-JSONBIN_ID = os.getenv("JSONBIN_ID")
 JSONBIN_KEY = os.getenv("JSONBIN_KEY")
+JSONBIN_ID  = os.getenv("JSONBIN_ID")
+
+if not JSONBIN_KEY or not JSONBIN_ID:
+    raise RuntimeError("❌ JSONBIN_KEY / JSONBIN_ID missing in environment")
 
 BASE_URL = f"https://api.jsonbin.io/v3/b/{JSONBIN_ID}"
 
-HEADERS = {
-    "Content-Type": "application/json",
-    "X-Master-Key": JSONBIN_KEY
-}
+
+def today_str():
+    """Return today date in Iran timezone (YYYY-MM-DD)"""
+    return datetime.now(ZoneInfo("Asia/Tehran")).strftime("%Y-%m-%d")
 
 
-# ✅ محاسبه شنبه هفته فعلی
-def get_current_week_start():
-    today = datetime.now()
-    weekday = today.weekday()    # دوشنبه=0 ... یکشنبه=6
-    delta = (weekday - 5) % 7    # شنبه = index=5
-    saturday = today - timedelta(days=delta)
-    return saturday.strftime("%Y-%m-%d")
-
-
-# ✅ دریافت دیتا + ریست هفتگی
-def load_data():
-    r = requests.get(BASE_URL, headers=HEADERS)
+def get_data():
+    r = requests.get(BASE_URL, headers={"X-Master-Key": JSONBIN_KEY})
     if r.status_code != 200:
-        raise Exception("❌ JSONBin load error")
-
-    data = r.json()["record"]
-    current_week_start = get_current_week_start()
-
-    if data.get("week_start") != current_week_start:
-        data = {
-            "week_start": current_week_start,
-            "reservations": []
-        }
-        save_data(data)
-
-    return data
+        raise RuntimeError("❌ JSONBIN read error")
+    return r.json()["record"]
 
 
-# ✅ ذخیره
-def save_data(data):
-    r = requests.put(BASE_URL, headers=HEADERS, json=data)
-    return r.status_code in (200, 201)
+def save_data(data: dict):
+    r = requests.put(BASE_URL, json=data, headers={"X-Master-Key": JSONBIN_KEY})
+    if r.status_code != 200:
+        raise RuntimeError("❌ JSONBIN write error")
 
 
-# ✅ تبدیل نام روز → تاریخ
-def weekday_to_date(weekday_name):
-    mapping = {
-        "شنبه": 0,
-        "یکشنبه": 1,
-        "دوشنبه": 2,
-        "سه‌شنبه": 3,
-        "چهارشنبه": 4,
-        "پنجشنبه": 5,
-        "جمعه": 6,
+# ------------------------------------------------
+# RESET
+# ------------------------------------------------
+def need_reset(data=None):
+    """Return True if it's time to reset (جمعه 00:00 به وقت ایران)"""
+    if data is None:
+        data = get_data()
+
+    last_reset = data.get("last_reset", "")
+    now = datetime.now(ZoneInfo("Asia/Tehran"))
+
+    # جمعه = weekday() == 4 (Monday=0 ... Friday=4)
+    if now.weekday() != 4:
+        return False
+
+    # اگر امروز جمعه است و هنوز برای امروز reset نشده:
+    return last_reset != today_str()
+
+
+def reset_reservations():
+    """Reset all days + save last_reset"""
+    data = {
+        "last_reset": today_str(),
+        "شنبه": False,
+        "یکشنبه": False,
+        "دوشنبه": False,
+        "سه‌شنبه": False,
+        "چهارشنبه": False,
+        "پنجشنبه": False,
+        "جمعه": False
     }
-
-    if weekday_name not in mapping:
-        return None
-
-    data = load_data()
-    week_start = datetime.strptime(data["week_start"], "%Y-%m-%d")
-    return (week_start + timedelta(days=mapping[weekday_name])).strftime("%Y-%m-%d")
+    save_data(data)
+    return True
 
 
-# ✅ رزرو
-def reserve(day_name, slot, full_name, telegram_id):
-    data = load_data()
+# ------------------------------------------------
+# RESERVE
+# ------------------------------------------------
+def reserve(day, slot, full_name, telegram_id):
+    data = get_data()
 
-    date = weekday_to_date(day_name)
-    if not date:
-        return False, "❌ روز نامعتبر است."
+    # اگر لازم است (اولین تعامل بعد از جمعه 00:00)، ریست کنیم
+    if need_reset(data):
+        reset_reservations()
+        data = get_data()
 
-    # جلوگیری از رزرو تکراری
-    for r in data["reservations"]:
-        if r["date"] == date and r["slot"] == slot:
-            return False, "❌ این بازه زمانی قبلاً رزرو شده است."
+    # اگر برای این روز رزروی وجود دارد، اجازه نده
+    if data.get(day) not in (False, None):
+        return False, "❌ این روز قبلاً رزرو شده است."
 
-    data["reservations"].append({
-        "date": date,
-        "day": day_name,
+    data[day] = {
         "slot": slot,
-        "full_name": full_name,
-        "telegram_id": telegram_id
-    })
-
+        "name": full_name,
+        "id": telegram_id
+    }
     save_data(data)
-    return True, "✅ رزرو با موفقیت انجام شد."
+    return True, "✅ رزرو با موفقیت ثبت شد."
 
 
-# ✅ لغو رزرو کاربر
+# ------------------------------------------------
+# CANCEL
+# ------------------------------------------------
 def cancel_reservation(telegram_id):
-    data = load_data()
-    res = data.get("reservations", [])
+    data = get_data()
 
-    new_res = [r for r in res if r["telegram_id"] != telegram_id]
+    removed = False
+    for day, val in data.items():
+        if isinstance(val, dict) and val.get("id") == telegram_id:
+            data[day] = False
+            removed = True
 
-    if len(new_res) == len(res):
-        return False, "❌ شما رزروی ندارید."
-
-    data["reservations"] = new_res
-    save_data(data)
-
-    return True, "✅ رزرو شما لغو شد."
+    if removed:
+        save_data(data)
+        return True, "✅ رزرو شما لغو شد."
+    else:
+        return False, "❌ رزروی برای شما یافت نشد."
