@@ -136,8 +136,21 @@ def run_loop():
 
 threading.Thread(target=run_loop, daemon=True).start()
 
+
 def submit(coro):
+    if tg_loop is None:
+        raise RuntimeError("Event loop not ready")
     return asyncio.run_coroutine_threadsafe(coro, tg_loop)
+
+
+# ✅ منتظر آماده شدن لوپ
+def wait_for_loop():
+    import time
+    for _ in range(50):   # تا ۵ ثانیه
+        if tg_loop is not None:
+            return True
+        time.sleep(0.1)
+    return False
 
 
 def bootstrap():
@@ -153,24 +166,12 @@ def bootstrap():
 
 
 # ------------------------
-# Webhook
-# ------------------------
-@app.route(WEBHOOK_PATH, methods=["POST"])
-def webhook():
-    data = request.get_json(force=True)
-    update = Update.de_json(data, application.bot)
-    submit(application.process_update(update))
-    return "ok", 200
-
-
-@app.route("/")
-def index():
-    return "✅ Bot Running"
-
-
-# ------------------------
 # Run
 # ------------------------
 if __name__ == "__main__":
-    bootstrap()
+    if wait_for_loop():
+        bootstrap()
+    else:
+        raise RuntimeError("Event loop failed to start")
+
     app.run(host="0.0.0.0", port=int(os.getenv("PORT", 5000)))
