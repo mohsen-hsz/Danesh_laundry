@@ -15,41 +15,53 @@ from telegram.ext import (
 
 from jsonbin import reserve, cancel_reservation
 
+# ------------------------------------------------
+# logging
+# ------------------------------------------------
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# ------------------------
+
+# ------------------------------------------------
 # ENV
-# ------------------------
+# ------------------------------------------------
 TOKEN = os.getenv("TOKEN")
 RENDER_EXTERNAL_URL = os.getenv("RENDER_EXTERNAL_URL")
 
 if not TOKEN or not RENDER_EXTERNAL_URL:
-    raise RuntimeError("TOKEN یا RENDER_EXTERNAL_URL تعریف نشده")
+    raise RuntimeError("❌ ENV values missing: TOKEN / RENDER_EXTERNAL_URL")
 
 WEBHOOK_PATH = f"/{TOKEN}"
-WEBHOOK_URL  = f"{RENDER_EXTERNAL_URL}{WEBHOOK_PATH}"
+WEBHOOK_URL = f"{RENDER_EXTERNAL_URL}{WEBHOOK_PATH}"
 
-# ------------------------
+
+# ------------------------------------------------
 # Flask
-# ------------------------
+# ------------------------------------------------
 app = Flask(__name__)
 
-# ------------------------
+
+# ------------------------------------------------
 # Telegram
-# ------------------------
+# ------------------------------------------------
 application = Application.builder().token(TOKEN).build()
 
 FULLNAME, DAY, SLOT = range(3)
 
 
+# ------------------------------------------------
+# Bot Functions
+# ------------------------------------------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "سلام! برای رزرو /reserve و برای لغو رزرو /cancel_reserve"
+        "سلام 👋\n"
+        "برای رزرو: /reserve\n"
+        "برای لغو رزرو: /cancel_reserve\n"
     )
 
+
 async def reserve_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("نام و نام‌خانوادگی را وارد کنید:")
+    await update.message.reply_text("نام و نام خانوادگی را وارد کنید:")
     return FULLNAME
 
 
@@ -61,8 +73,9 @@ async def ask_day(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ["سه‌شنبه", "چهارشنبه", "پنجشنبه"],
         ["جمعه"],
     ]
+
     await update.message.reply_text(
-        "روز را انتخاب کنید:",
+        "روز موردنظر را انتخاب کنید:",
         reply_markup=ReplyKeyboardMarkup(keyboard, one_time_keyboard=True),
     )
     return DAY
@@ -72,6 +85,7 @@ async def ask_slot(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["day"] = update.message.text.strip()
 
     keyboard = [["18-19", "19-20", "20-21"]]
+
     await update.message.reply_text(
         "بازه زمانی را انتخاب کنید:",
         reply_markup=ReplyKeyboardMarkup(keyboard, one_time_keyboard=True),
@@ -84,7 +98,7 @@ async def reserve_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message.text.strip()
 
     if msg not in slot_map:
-        await update.message.reply_text("❌ بازه نامعتبر است.")
+        await update.message.reply_text("❌ بازه زمانی نامعتبر است.")
         return SLOT
 
     slot = slot_map[msg]
@@ -94,6 +108,7 @@ async def reserve_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     ok, res = reserve(day, slot, full_name, telegram_id)
     await update.message.reply_text(res, reply_markup=ReplyKeyboardRemove())
+
     return ConversationHandler.END
 
 
@@ -108,7 +123,9 @@ async def cancel(update, context):
     return ConversationHandler.END
 
 
-# ثبت handlers
+# ------------------------------------------------
+# Handlers
+# ------------------------------------------------
 conv = ConversationHandler(
     entry_points=[CommandHandler("reserve", reserve_start)],
     states={
@@ -123,30 +140,35 @@ application.add_handler(conv)
 application.add_handler(CommandHandler("start", start))
 application.add_handler(CommandHandler("cancel_reserve", cancel_reserve_cmd))
 
-# ------------------------
-# Async Loop
-# ------------------------
-tg_loop = None
+
+# ------------------------------------------------
+# ASYNC LOOP
+# ------------------------------------------------
+tg_loop: asyncio.AbstractEventLoop | None = None
+
 
 def run_loop():
+    """Creates async loop"""
     global tg_loop
     tg_loop = asyncio.new_event_loop()
     asyncio.set_event_loop(tg_loop)
     tg_loop.run_forever()
 
-threading.Thread(target=run_loop, daemon=True).start()
+
+threading.Thread(target=run_loop, name="tg-loop", daemon=True).start()
 
 
 def submit(coro):
+    """Threadsafe submit to loop"""
     if tg_loop is None:
-        raise RuntimeError("Event loop not ready")
+        raise RuntimeError("Event loop not ready!")
     return asyncio.run_coroutine_threadsafe(coro, tg_loop)
 
 
-# ✅ منتظر آماده شدن لوپ
 def wait_for_loop():
+    """Wait until loop is ready"""
     import time
-    for _ in range(50):   # تا ۵ ثانیه
+    for _ in range(50):  # ~5s
         if tg_loop is not None:
             return True
         time.sleep(0.1)
@@ -154,24 +176,51 @@ def wait_for_loop():
 
 
 def bootstrap():
+    """Start Telegram App + Webhook"""
     submit(application.initialize()).result()
 
     async def setup_webhook():
-        await application.bot.delete_webhook()
-        await application.bot.set_webhook(WEBHOOK_URL)
+        info = await application.bot.get_webhook_info()
+        if info.url != WEBHOOK_URL:
+            await application.bot.delete_webhook()
+            await application.bot.set_webhook(WEBHOOK_URL)
 
     submit(setup_webhook()).result()
     submit(application.start()).result()
-    logger.info("✅ BOT READY | %s", WEBHOOK_URL)
+
+    logger.info("✅ BOT READY | Webhook → %s", WEBHOOK_URL)
 
 
-# ------------------------
-# Run
-# ------------------------
+# ------------------------------------------------
+# WEBHOOK ROUTES
+# ------------------------------------------------
+@app.route(WEBHOOK_PATH, methods=["POST"])
+def webhook():
+    """Telegram → Flask"""
+    try:
+        data = request.get_json(force=True)
+        update = Update.de_json(data, application.bot)
+        submit(application.process_update(update))
+    except Exception as e:
+        logger.exception("❌ WEBHOOK ERROR: %s", e)
+
+    return "ok", 200
+
+
+@app.route("/")
+def index():
+    return "✅ Bot Running", 200
+
+
+# ------------------------------------------------
+# MAIN
+# ------------------------------------------------
 if __name__ == "__main__":
     if wait_for_loop():
         bootstrap()
     else:
-        raise RuntimeError("Event loop failed to start")
+        raise RuntimeError("❌ Event loop failed to start")
 
-    app.run(host="0.0.0.0", port=int(os.getenv("PORT", 5000)))
+    port = int(os.getenv("PORT", 5000))
+    logger.info("Flask running on port %d", port)
+    app.run(host="0.0.0.0", port=port)
