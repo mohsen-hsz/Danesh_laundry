@@ -94,7 +94,7 @@ async def ask_slot(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def reserve_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    slot_map = {"18-19": 1, "19-20": 2, "20-21": 3}
+    slot_map = {"18-19": 0, "19-20": 1, "20-21": 2}
     msg = update.message.text.strip()
 
     if msg not in slot_map:
