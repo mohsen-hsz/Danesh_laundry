@@ -1,191 +1,131 @@
 import os
-import time
-import threading
+import requests
 from datetime import datetime
 from zoneinfo import ZoneInfo
+import time
+import threading
 
-import requests
-
-# ==============================
-# تنظیمات و ثابت‌ها
-# ==============================
+# ============================================================
+#  LOAD ENV
+# ============================================================
 JSONBIN_KEY = os.getenv("JSONBIN_KEY")
-JSONBIN_ID = os.getenv("JSONBIN_ID")
-BOT_TOKEN = os.getenv("TOKEN") or os.getenv("TELEGRAM_TOKEN", "")
+JSONBIN_ID  = os.getenv("JSONBIN_ID")
 
 if not JSONBIN_KEY or not JSONBIN_ID:
-    raise RuntimeError("❌ JSONBIN_KEY یا JSONBIN_ID در ENV تنظیم نشده است.")
+    raise RuntimeError("❌ JSONBIN_KEY / JSONBIN_ID is missing in ENV")
 
 BASE_URL = f"https://api.jsonbin.io/v3/b/{JSONBIN_ID}"
-CAPACITY = 3  # تعداد اسلات‌های هر روز (18-19 ، 19-20 ، 20-21)
+CAPACITY = 3  # تعداد ظرفیت رزرو در هر روز
 
 
-# ==============================
-# کمک‌تابع‌های زمان
-# ==============================
+# ============================================================
+#  HELPERS
+# ============================================================
+def today_str():
+    """Return today's date in Iran timezone."""
+    return datetime.now(ZoneInfo("Asia/Tehran")).strftime("%Y-%m-%d")
+
+
 def now_tehran():
+    """Return now() in Iran timezone."""
     return datetime.now(ZoneInfo("Asia/Tehran"))
 
 
-def today_str():
-    return now_tehran().strftime("%Y-%m-%d")
-
-
-# ==============================
-# خواندن / نوشتن JSONBin
-# ==============================
+# ============================================================
+#  JSONBIN READ / WRITE
+# ============================================================
 def get_data():
-    resp = requests.get(BASE_URL, headers={"X-Master-Key": JSONBIN_KEY})
-    resp.raise_for_status()
-    data = resp.json().get("record", {})
-    return ensure_structure(data)
+    r = requests.get(BASE_URL, headers={"X-Master-Key": JSONBIN_KEY})
+    if r.status_code != 200:
+        raise RuntimeError("❌ ERROR reading JSONBin")
+    return r.json()["record"]
 
 
 def save_data(data: dict):
-    resp = requests.put(BASE_URL, json=data, headers={"X-Master-Key": JSONBIN_KEY})
-    resp.raise_for_status()
+    r = requests.put(BASE_URL, json=data, headers={"X-Master-Key": JSONBIN_KEY})
+    if r.status_code != 200:
+        raise RuntimeError("❌ ERROR writing JSONBin")
 
 
-# ==============================
-# اطمینان از ساختار صحیح دیتا
-# ==============================
-def ensure_structure(data: dict) -> dict:
-    days = ["شنبه", "یکشنبه", "دوشنبه", "سه‌شنبه",
-            "چهارشنبه", "پنجشنبه", "جمعه"]
-
-    if "last_reset" not in data:
-        data["last_reset"] = today_str()
-
-    if "users" not in data or not isinstance(data["users"], list):
-        data["users"] = []
-
-    for d in days:
-        if d not in data or not isinstance(data[d], list) or len(data[d]) != CAPACITY:
-            data[d] = [False] * CAPACITY
-
-    return data
-
-
-# ==============================
-# ثبت کاربر برای ارسال پیام عمومی
-# ==============================
-def register_user(chat_id: int):
-    data = get_data()
-    users = data.get("users", [])
-    if chat_id not in users:
-        users.append(chat_id)
-        data["users"] = users
-        save_data(data)
-
-
-# ==============================
-# ارسال پیام تلگرام
-# ==============================
-def send_telegram(chat_id: int, text: str):
-    if not BOT_TOKEN:
-        print("⚠️ TOKEN در ENV تنظیم نشده، امکان ارسال پیام نیست.")
-        return
-
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-    payload = {"chat_id": chat_id, "text": text}
-    try:
-        requests.post(url, json=payload, timeout=5)
-    except Exception as e:
-        print("⚠️ خطا در ارسال پیام:", e)
-
-
-def broadcast_to_all_users(text: str):
-    data = get_data()
-    users = data.get("users", [])
-    print(f"📢 Broadcast به {len(users)} کاربر")
-    for uid in users:
-        send_telegram(uid, text)
-
-
-# ==============================
-# منطق ریست هفتگی
-# ==============================
-def need_reset(data=None) -> bool:
-    """فقط جمعه و فقط اگر برای امروز last_reset ثبت نشده باشد."""
+# ============================================================
+#  AUTO RESET LOGIC
+# ============================================================
+def need_reset(data=None):
+    """Return True if it's Friday midnight (Tehran) and not reset yet."""
     if data is None:
         data = get_data()
 
     last_reset = data.get("last_reset", "")
     now = now_tehran()
 
-    # جمعه = 4 (Monday=0)
+    # جمعه == weekday 4  (Monday=0, Friday=4)
     if now.weekday() != 4:
         return False
 
+    # هنوز reset امروز انجام نشده
     return last_reset != today_str()
 
 
 def reset_reservations():
-    """پاک‌کردن تمام رزروها و نگه‌داشتن لیست users."""
-    old_data = get_data()
-    users = old_data.get("users", [])
+    """Reset all daily reservations."""
+    data = {"last_reset": today_str()}
 
     days = ["شنبه", "یکشنبه", "دوشنبه", "سه‌شنبه",
             "چهارشنبه", "پنجشنبه", "جمعه"]
 
-    new_data = {
-        "last_reset": today_str(),
-        "users": users
-    }
-
     for d in days:
-        new_data[d] = [False] * CAPACITY
+        data[d] = [False] * CAPACITY
 
-    save_data(new_data)
-    print("🧹 Weekly RESET done (جمعه 00:00 به وقت ایران)")
-
-    # پیام به همه کاربران
-    broadcast_to_all_users("📢 رزروهای این هفته ریست شدند. می‌توانید دوباره رزرو کنید!")
+    save_data(data)
+    print("🧹 RESET: all reservations cleared.")
 
     return True
 
 
 def auto_reset_worker():
-    """Thread بک‌گراند برای ریست جمعه ساعت 00:00."""
+    """Background thread checking periodic reset."""
     while True:
         try:
-            now = now_tehran()
-            if now.weekday() == 4 and now.hour == 0 and now.minute == 0:
-                if need_reset():
-                    reset_reservations()
-            time.sleep(30)
+            if need_reset():
+                print("🧹 Auto-RESET triggered at Friday midnight (Iran)")
+                reset_reservations()
         except Exception as e:
             print("❌ Auto-reset error:", e)
-            time.sleep(60)
+
+        time.sleep(600)  # check every 10 minutes
 
 
-# شروع thread ریست خودکار
-threading.Thread(target=auto_reset_worker, daemon=True, name="auto-reset").start()
+# Launch auto reset in background
+threading.Thread(target=auto_reset_worker, daemon=True).start()
 
 
-# ==============================
-# رزرو
-# ==============================
-def reserve(day: str, slot: int, full_name: str, telegram_id: int):
-    """day: نام روز؛ slot: ایندکس 0..2؛ full_name, telegram_id."""
-    register_user(telegram_id)
-
+# ============================================================
+#  RESERVE
+# ============================================================
+def reserve(day, slot, full_name, telegram_id):
+    """Reserve a slot (0,1,2) for a day."""
     data = get_data()
 
-    # اگر جمعه شده و هنوز reset نشده
+    # اگر لازم است reset انجام شود (جمعه نیمه شب)
     if need_reset(data):
         reset_reservations()
         data = get_data()
 
     if day not in data:
-        return False, "❌ روز واردشده معتبر نیست."
+        return False, "❌ روز وارد شده معتبر نیست."
+
+    # ساختار را تضمین می‌کنیم
+    if not isinstance(data[day], list) or len(data[day]) != CAPACITY:
+        data[day] = [False] * CAPACITY
 
     if slot < 0 or slot >= CAPACITY:
         return False, "❌ بازه زمانی نامعتبر است."
 
+    # اگر اسلات پر باشد
     if data[day][slot] not in (False, None):
         return False, "❌ این بازه قبلاً رزرو شده است."
 
+    # ذخیره
     data[day][slot] = {
         "name": full_name,
         "id": telegram_id
@@ -195,12 +135,11 @@ def reserve(day: str, slot: int, full_name: str, telegram_id: int):
     return True, "✅ رزرو با موفقیت ثبت شد."
 
 
-# ==============================
-# کنسل‌کردن
-# ==============================
-def cancel_reservation(telegram_id: int):
-    register_user(telegram_id)
-
+# ============================================================
+#  CANCEL
+# ============================================================
+def cancel_reservation(telegram_id):
+    """Remove ALL reservations for this user."""
     data = get_data()
     removed = False
 
@@ -208,46 +147,15 @@ def cancel_reservation(telegram_id: int):
             "چهارشنبه", "پنجشنبه", "جمعه"]
 
     for d in days:
-        slots = data.get(d, [])
-        if not isinstance(slots, list):
-            continue
-        for i in range(len(slots)):
-            cell = slots[i]
-            if isinstance(cell, dict) and cell.get("id") == telegram_id:
-                data[d][i] = False
-                removed = True
+        if isinstance(data.get(d), list):
+            for i in range(CAPACITY):
+                cell = data[d][i]
+                if isinstance(cell, dict) and cell.get("id") == telegram_id:
+                    data[d][i] = False
+                    removed = True
 
     if removed:
         save_data(data)
-        return True, "🔄 تمام رزروهای شما لغو شدند."
+        return True, "🔄 رزرو شما لغو شد."
     else:
         return False, "❌ رزروی برای شما یافت نشد."
-
-
-# ==============================
-# تقویم هفتگی
-# ==============================
-def get_calendar() -> str:
-    """متن وضعیت رزرو هفتگی را برمی‌گرداند."""
-    data = get_data()
-
-    days = ["شنبه", "یکشنبه", "دوشنبه", "سه‌شنبه",
-            "چهارشنبه", "پنجشنبه", "جمعه"]
-    slot_labels = ["18-19", "19-20", "20-21"]
-
-    text = "📅 *وضعیت رزرو هفتگی*\n\n"
-
-    for d in days:
-        text += f"📌 *{d}*\n"
-        slots = data.get(d, [False] * CAPACITY)
-
-        for i in range(CAPACITY):
-            cell = slots[i] if i < len(slots) else False
-            if not cell:
-                text += f"▫️ {slot_labels[i]} → خالی\n"
-            else:
-                name = cell.get("name", "نامشخص")
-                text += f"🔴 {slot_labels[i]} → رزرو شده توسط *{name}*\n"
-        text += "\n"
-
-    return text
